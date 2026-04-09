@@ -5,3 +5,5 @@ playwright
 playwright-stealth
 pydantic-settings
 easyocr
+pytest
+pytest-asyncio
