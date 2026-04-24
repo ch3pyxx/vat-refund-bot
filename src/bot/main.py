@@ -2,33 +2,14 @@ from aiogram import Bot, Dispatcher, F
 import asyncio
 import logging
 from config import TOKEN
-
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from handlers import router
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
-
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
-    await message.answer("Доброго времени суток!")
-
-@dp.message(Command('help'))
-async def cmd_help(message: Message):
-    await message.answer("Это команда help")
-
-@dp.message(F.text == "Сколько будет 10 + 10?")
-async def calculatebot(message: Message):
-    value = get_twenty()
-    await message.answer(str(value))
-
-
-def get_twenty()-> int:
-    return 20
-
 async def main():
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
