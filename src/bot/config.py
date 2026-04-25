@@ -1,1 +1,12 @@
-TOKEN = '8768353370:AAFyeQ_f_P-7KNecpS4bZUZ-9pVgWApxvvg'
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+class Settings(BaseSettings):
+    TOKEN: str
+
+    model_config = {
+        "env_file": Path(__file__).parent.parent.parent / ".env",
+        "env_file_encoding": "utf-8",
+    }
+
+settings = Settings()
