@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from recognition.decoder import decode_qr
 from recognition.parsep import parse_receipt
-from automation.soliq_filler import register_receipt
 from reports.excel_report import add_receipt, REPORTS_DIR
 from keybord import main_keyboard
 
@@ -21,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 WELCOME = (
     "Добро пожаловать!\n\n"
-    "Я автоматически регистрирую чеки на <b>soliq.uz</b> и сохраняю данные в Excel-реестр НДС.\n\n"
+    "Я автоматически распознаю чеки и сохраняю данные в Excel-реестр НДС.\n\n"
     "<b>Что умею:</b>\n"
     "• Распознаю QR-коды с чеков\n"
-    "• Регистрирую чек на soliq.uz\n"
+    "• Достаю данные чека с soliq.uz\n"
     "• Веду реестр в Excel\n\n"
     "Просто отправьте фото QR-кода."
 )
@@ -33,7 +32,7 @@ HELP = (
     "<b>Инструкция:</b>\n\n"
     "1. Нажмите <b>Отправить чек</b> или просто пришлите фото\n"
     "2. Сфотографируйте QR-код на чеке как можно чётче\n"
-    "3. Дождитесь подтверждения регистрации\n\n"
+    "3. Дождитесь подтверждения\n\n"
     "<b>Получить отчёт</b> — пришлю Excel-файл за текущий месяц.\n\n"
     "По вопросам: @ch3pyxx"
 )
@@ -79,7 +78,7 @@ async def handle_photo(message: Message, bot: Bot):
     await bot.download_file(file.file_path, destination=buf)
     image_bytes = buf.getvalue()
 
-    # 1. Декодируем QR-код
+    # 1. Декодируем QR-код → получаем URL чека
     try:
         qr_data = await decode_qr(image_bytes)
     except NotImplementedError:
@@ -90,32 +89,15 @@ async def handle_photo(message: Message, bot: Bot):
         await message.answer("Не удалось распознать QR-код. Попробуйте сфотографировать чётче.")
         return
 
-    # 2. Парсим данные чека
+    # 2. Парсим данные чека с soliq.uz
     try:
         receipt = await parse_receipt(qr_data)
-    except NotImplementedError:
-        await message.answer("Модуль парсинга чека ещё не подключён.")
-        return
     except Exception:
         logger.exception("Ошибка парсинга чека")
         await message.answer("Не удалось получить данные чека с soliq.uz.")
         return
 
-    # 3. Регистрируем на soliq.uz
-    try:
-        success = await register_receipt(receipt)
-        if not success:
-            await message.answer("Не удалось зарегистрировать чек на soliq.uz.")
-            return
-    except NotImplementedError:
-        await message.answer("Модуль регистрации на soliq.uz ещё не подключён.")
-        return
-    except Exception:
-        logger.exception("Ошибка регистрации на soliq.uz")
-        await message.answer("Ошибка при регистрации на soliq.uz.")
-        return
-
-    # 4. Сохраняем в Excel
+    # 3. Сохраняем в Excel-реестр
     try:
         add_receipt(
             org_name=receipt.org_name,
@@ -125,9 +107,11 @@ async def handle_photo(message: Message, bot: Bot):
         )
     except Exception:
         logger.exception("Ошибка записи в Excel")
+        await message.answer("Чек распознан, но не удалось сохранить в реестр.")
+        return
 
     await message.answer(
-        f"Чек зарегистрирован!\n\n"
+        f"Чек добавлен в реестр!\n\n"
         f"<b>{receipt.org_name}</b>\n"
         f"Сумма: {receipt.amount:,.0f} сум\n"
         f"НДС: {receipt.vat:,.2f} сум\n"
