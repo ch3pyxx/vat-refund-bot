@@ -6,5 +6,7 @@ playwright-stealth
 pydantic-settings
 easyocr
 openpyxl
+beautifulsoup4
+requests
 pytest
 pytest-asyncio
