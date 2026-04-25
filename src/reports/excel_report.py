@@ -11,6 +11,11 @@ DATA_START_ROW = 4
 DATA_END_ROW = 37
 
 
+def get_user_report_path(user_id: int) -> Path:
+    """Путь к файлу-реестру конкретного пользователя за текущий месяц."""
+    return REPORTS_DIR / f"{user_id}_{datetime.now():%Y-%m}.xlsx"
+
+
 def _next_empty_row(ws) -> int | None:
     for row_idx in range(DATA_START_ROW, DATA_END_ROW + 1):
         if ws.cell(row=row_idx, column=2).value is None:
@@ -26,13 +31,13 @@ def get_or_create_report(report_path: Path) -> Path:
 
 
 def add_receipt(
+    user_id: int,
     org_name: str,
     amount: float,
     vat: float,
     payment_date: datetime,
-    report_path: Path | None = None,
 ) -> Path:
-    path = report_path or REPORTS_DIR / f"report_{datetime.now():%Y-%m}.xlsx"
+    path = get_user_report_path(user_id)
     get_or_create_report(path)
 
     wb = load_workbook(path)
@@ -49,3 +54,14 @@ def add_receipt(
 
     wb.save(path)
     return path
+
+
+def clear_user_reports(user_id: int) -> int:
+    """Удаляет все файлы-реестры пользователя. Возвращает кол-во удалённых файлов."""
+    if not REPORTS_DIR.exists():
+        return 0
+    deleted = 0
+    for f in REPORTS_DIR.glob(f"{user_id}_*.xlsx"):
+        f.unlink()
+        deleted += 1
+    return deleted

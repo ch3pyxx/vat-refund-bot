@@ -12,7 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from recognition.decoder import decode_qr
 from recognition.parsep import parse_receipt
-from reports.excel_report import add_receipt, REPORTS_DIR
+from reports.excel_report import (
+    add_receipt,
+    clear_user_reports,
+    get_user_report_path,
+)
 from keybord import main_keyboard
 
 router = Router()
@@ -52,7 +56,7 @@ async def cmd_help(message: Message):
 @router.message(Command("report"))
 @router.message(F.text == "Получить отчёт")
 async def cmd_report(message: Message):
-    report_path = REPORTS_DIR / f"report_{datetime.now():%Y-%m}.xlsx"
+    report_path = get_user_report_path(message.from_user.id)
     if not report_path.exists():
         await message.answer("Отчёт за текущий месяц пока пуст — чеков не добавлено.")
         return
@@ -60,6 +64,19 @@ async def cmd_report(message: Message):
         FSInputFile(report_path, filename=f"НДС_{datetime.now():%Y-%m}.xlsx"),
         caption=f"Реестр НДС за {datetime.now():%B %Y}",
     )
+
+
+@router.message(Command("clear"))
+@router.message(F.text == "Очистить реестр")
+async def cmd_clear(message: Message):
+    deleted = clear_user_reports(message.from_user.id)
+    if deleted == 0:
+        await message.answer("Реестр уже пуст — удалять нечего.")
+    else:
+        await message.answer(
+            f"Реестр очищен. Удалено файлов: {deleted}.\n"
+            f"При следующей отправке чека будет создан новый чистый реестр."
+        )
 
 
 @router.message(F.text == "Отправить чек")
@@ -97,9 +114,10 @@ async def handle_photo(message: Message, bot: Bot):
         await message.answer("Не удалось получить данные чека с soliq.uz.")
         return
 
-    # 3. Сохраняем в Excel-реестр
+    # 3. Сохраняем в Excel-реестр (отдельно для каждого пользователя)
     try:
         add_receipt(
+            user_id=message.from_user.id,
             org_name=receipt.org_name,
             amount=receipt.amount,
             vat=receipt.vat,
