@@ -6,6 +6,8 @@ from datetime import datetime
 
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, FSInputFile
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,13 +17,21 @@ from recognition.parsep import parse_receipt
 from reports.excel_report import (
     add_receipt,
     clear_user_reports,
+    expand_report,
     get_user_report_path,
     DuplicateReceiptError,
+    ReportFullError,
+    MAX_EXPAND,
 )
 from keybord import main_keyboard
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+class ExpandStates(StatesGroup):
+    waiting_count = State()
+
 
 WELCOME = (
     "Добро пожаловать!\n\n"
@@ -43,8 +53,76 @@ HELP = (
 )
 
 
+# ВАЖНО: state-handler'ы регистрируются первыми, чтобы перехватывать
+# ввод раньше обычных F.text-фильтров.
+@router.message(Command("cancel"), ExpandStates.waiting_count)
+async def cancel_expand(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Отменено. Реестр не расширен, чек не сохранён.")
+
+
+@router.message(ExpandStates.waiting_count, F.text)
+async def handle_expand_count(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    try:
+        n = int(text)
+        if not 1 <= n <= MAX_EXPAND:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            f"Введите целое число от 1 до {MAX_EXPAND}, либо /cancel чтобы отменить."
+        )
+        return
+
+    data = await state.get_data()
+    pending = data.get("pending_receipt")
+    if not pending:
+        await state.clear()
+        await message.answer("Что-то пошло не так. Отправьте чек заново.")
+        return
+
+    try:
+        expand_report(message.from_user.id, n)
+    except Exception:
+        logger.exception("Ошибка расширения реестра")
+        await state.clear()
+        await message.answer("Не удалось расширить реестр.")
+        return
+
+    try:
+        add_receipt(
+            user_id=message.from_user.id,
+            org_name=pending["org_name"],
+            amount=pending["amount"],
+            vat=pending["vat"],
+            payment_date=datetime.fromisoformat(pending["payment_date"]),
+            receipt_id=pending["receipt_id"],
+        )
+    except DuplicateReceiptError:
+        await state.clear()
+        await message.answer(
+            f"Реестр расширен на {n} строк, но этот чек уже был добавлен."
+        )
+        return
+    except Exception:
+        logger.exception("Ошибка записи отложенного чека после расширения")
+        await state.clear()
+        await message.answer("Реестр расширен, но не удалось сохранить чек.")
+        return
+
+    await state.clear()
+    await message.answer(
+        f"Реестр расширен на {n} строк. Чек добавлен:\n\n"
+        f"<b>{pending['org_name']}</b>\n"
+        f"Сумма: {pending['amount']:,.0f} сум\n"
+        f"НДС: {pending['vat']:,.2f} сум",
+        parse_mode="HTML",
+    )
+
+
 @router.message(CommandStart())
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     await message.answer(WELCOME, parse_mode="HTML", reply_markup=main_keyboard)
 
 
@@ -69,7 +147,8 @@ async def cmd_report(message: Message):
 
 @router.message(Command("clear"))
 @router.message(F.text == "Очистить реестр")
-async def cmd_clear(message: Message):
+async def cmd_clear(message: Message, state: FSMContext):
+    await state.clear()
     deleted = clear_user_reports(message.from_user.id)
     if deleted == 0:
         await message.answer("Реестр уже пуст — удалять нечего.")
@@ -86,7 +165,7 @@ async def prompt_photo(message: Message):
 
 
 @router.message(F.photo)
-async def handle_photo(message: Message, bot: Bot):
+async def handle_photo(message: Message, bot: Bot, state: FSMContext):
     await message.answer("Обрабатываю чек...")
 
     # Скачиваем фото (берём наибольшее разрешение)
@@ -127,6 +206,21 @@ async def handle_photo(message: Message, bot: Bot):
         )
     except DuplicateReceiptError:
         await message.answer("Этот чек уже добавлен в реестр.")
+        return
+    except ReportFullError as e:
+        await state.set_state(ExpandStates.waiting_count)
+        await state.update_data(pending_receipt={
+            "org_name": receipt.org_name,
+            "amount": receipt.amount,
+            "vat": receipt.vat,
+            "payment_date": receipt.payment_date.isoformat(),
+            "receipt_id": receipt.receipt_id,
+        })
+        await message.answer(
+            f"Реестр заполнен ({e.current_size} строк).\n"
+            f"Сколько строк добавить? Введите число от 1 до {MAX_EXPAND} "
+            f"(или /cancel чтобы отменить)."
+        )
         return
     except Exception:
         logger.exception("Ошибка записи в Excel")
