@@ -16,6 +16,7 @@ from reports.excel_report import (
     add_receipt,
     clear_user_reports,
     get_user_report_path,
+    DuplicateReceiptError,
 )
 from keybord import main_keyboard
 
@@ -122,7 +123,11 @@ async def handle_photo(message: Message, bot: Bot):
             amount=receipt.amount,
             vat=receipt.vat,
             payment_date=receipt.payment_date,
+            receipt_id=receipt.receipt_id,
         )
+    except DuplicateReceiptError:
+        await message.answer("Этот чек уже добавлен в реестр.")
+        return
     except Exception:
         logger.exception("Ошибка записи в Excel")
         await message.answer("Чек распознан, но не удалось сохранить в реестр.")
